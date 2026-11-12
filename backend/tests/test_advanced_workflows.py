@@ -95,3 +95,16 @@ def test_error_report_breaks_down_false_positive_and_missed_truth():
     assert report["by_scenario"]["occlusion"]["false_positives"]==1
     assert report["by_behavior"]["carrying"]["false_negatives"]==1
     assert len(report["error_examples"])==2
+
+
+def test_pose_feature_builder_normalizes_and_masks_missing_anchors():
+    from build_pose_features import convert
+    frame=[[float(i),float(i+3),.95] for i in range(17)]
+    sample=dict(label="reach",split="train",group="clip_A",
+                poses=[frame,frame,[[0.,0.,.1] for _ in range(17)]])
+    output=convert(sample)
+    assert output["label"]=="reach"
+    assert len(output["features"])==3
+    assert len(output["features"][0])==51
+    assert output["features"][-1]==[0.0]*51
+    assert output["features"][0][11*3+2]==1.0
