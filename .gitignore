@@ -41,3 +41,9 @@ frontend/.next-build/
 *.sqlite
 *.sqlite3
 *.db
+
+# Private evaluation clips, annotation exports, features and experiments
+backend/private-datasets/
+backend/experiments/
+*.ckpt
+*.pth

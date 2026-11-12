@@ -5,6 +5,7 @@ from ..models import Annotation
 from .annotation_data import serialize_annotation
 from .spatial import generate_spatial, surface_suggestions
 from .sequences import recognize_activities
+from .complex_activities import complex_candidates
 from .video_service import create_annotation_records
 
 
@@ -14,7 +15,9 @@ def refresh_understanding(db, video):
     protected=[serialize_annotation(a) for a in rows if a.source not in {'local_spatial','local_sequence'} or a.review_status!='needs_review']
     actions=[a for a in protected if a['annotation_kind']=='behavior']
     frames=json.loads(video.detections or '[]');regions=json.loads(video.scene_regions or '[]')
-    generated=generate_spatial(frames,regions)+surface_suggestions(actions,frames,regions)+recognize_activities(actions,frames,regions)
+    grouped=recognize_activities(actions,frames,regions)
+    generated=(generate_spatial(frames,regions)+surface_suggestions(actions,frames,regions)+
+               grouped+complex_candidates(actions,frames,regions,grouped))
     db.query(Annotation).filter(Annotation.video_id==video.id,Annotation.source.in_(['local_spatial','local_sequence']),Annotation.review_status=='needs_review').delete(synchronize_session='fetch')
     pending=[]
     for e in generated:
