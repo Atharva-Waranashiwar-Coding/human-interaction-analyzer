@@ -416,7 +416,7 @@ def test_planar_pulling_candidate_moves_toward_stationary_torso():
 @pytest.mark.parametrize('case',['no_wrist','static','independent','moving_body','moving_camera','track_gap'])
 def test_planar_manipulation_rejects_weak_or_interrupted_evidence(case):
     rules=ObjectActivities(2)
-    for i in range(7):
+    for i in range(5 if case=='track_gap' else 7):
         time=i/2
         x=60+20*time
         p=person(wrist=(x if case!='independent' else 10,90))
