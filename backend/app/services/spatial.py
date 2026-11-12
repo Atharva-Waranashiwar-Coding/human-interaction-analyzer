@@ -135,16 +135,18 @@ def surface_suggestions(actions, frames, regions):
         if a.get('behavior')!='placing / putting down' or a.get('review_status')=='rejected':continue
         for obj in a.get('objects',[]):
             oid=obj['id'];rid=region_at(frames,regions,oid,a['end_time'])
-            region=next((r for r in regions if r['id']==rid and r.get('kind') in {'table','shelf'}),None)
+            region=next((r for r in regions if r['id']==rid and r.get('kind') in {'table','shelf','container'}),None)
             if region is None:continue
             tail=[f for f in frames if a['end_time']-.8<=f['time']<=a['end_time']]
             boxes=[observations(f).get(oid) for f in tail]
             if len(boxes)<3 or any(b is None for b in boxes) or tail[-1]['time']-tail[0]['time']<.6:continue
             height=max(boxes[0]['box'][3]-boxes[0]['box'][1],.01)
             if max(math.dist(center(b['box']),center(boxes[0]['box'])) for b in boxes)>.08*height:continue
+            is_container=region['kind']=='container'
             rows.append(dict(a,id=uuid.uuid5(uuid.NAMESPACE_URL,'surface:'+a['id']+rid).hex,
-                behavior='possible on-surface placement',annotation_kind='spatial',source='local_spatial',
+                behavior='possible container-region placement' if is_container else 'possible on-surface placement',
+                annotation_kind='spatial',source='local_spatial',
                 details=dict(subject_id=oid,target_id=rid,region_id=rid,action_ids=[a['id']]),
-                description='A placement action coincides with a stable object center in a manually configured surface region.'+CAUTION,
+                description=('A placement action coincides with a stable object center in a manually configured container image region; physical insertion is not verified.' if is_container else 'A placement action coincides with a stable object center in a manually configured surface region.')+CAUTION,
                 review_status='needs_review',confidence=None,rule_version=VERSION))
     return rows

@@ -407,3 +407,15 @@ The full extension regression run passed **210 tests including two real-video AP
 Frontend lint, TypeScript checking and the production build passed. An isolated Chrome session using a temporary SQLite database and a copied real clip verified advanced activity review, persisted feedback, region configuration, absence of invented evaluation scores without ground truth, audio metadata and manual event saving, structured search, and existing-player seeking to 2 seconds, with **zero browser JavaScript errors**. Scripted manual action rows exercised the UI sequence controls; those rows are not recognition ground truth. User videos/databases were read or copied for testing rather than edited. Test media, temporary databases, browser artifacts, and weights remain outside Git.
 
 The extension was developed and verified on `feature/spatial-activity-understanding`. No deployment or production configuration change was performed. Restart the local backend to activate the additive schema migration and endpoints; the frontend uses the existing development/build commands. No known regression was found in the completed checks. Exhaustive recognition quality across real scenes remains unverified and requires representative independent ground truth.
+
+
+### Region-aware multi-object workflow suggestions (experimental)
+
+The `feature/workflow-evidence-v2` extension adds two conservative, reviewable annotations while reusing the existing detector cache, SQLite schema, annotation editor and activity search:
+
+- **possible container-region placement**: an existing placing action is supported by a stationary object tail inside a configured image-region of kind `container`. This does not prove insertion, containment or successful packing.
+- **repeated_destination_region_placement**: at least two distinct objects have nonoverlapping, complete pickup/carry/placement sequences ending in the same configured `container`, `shelf` or `table` region within 60 seconds, involving the same participant IDs. It is not a packing, sorting or loading classifier.
+
+Both types begin as `needs_review` with `confidence: null`; their evidence links to existing action IDs. Camera motion, missing stable region observations, incomplete action sequences and ambiguous regions suppress the corresponding suggestions. Existing behaviors are unchanged. No new inference models or dependencies were introduced.
+
+**Validation required before merge:** run `.venv/bin/python -m pytest backend/tests -q` and `cd frontend && npm run build` in a configured environment. New synthetic unit tests cover positive and negative cases, but independent real-video ground truth is still required to measure accuracy.

@@ -53,3 +53,19 @@ def test_region_entry_does_not_bridge_missing_object_observations():
     region=dict(id='table',box=[.45,.1,.9,.9])
     frames=[frame(i*.2,.1 if i<7 else .6,missing=i==6) for i in range(15)]
     assert not any(e['behavior']=='enters region' for e in generate_spatial(frames,[region]))
+
+
+def test_container_region_placement_requires_existing_action_and_stable_tail():
+    from app.services.spatial import surface_suggestions
+    frames=[frame(i*.2,.55) for i in range(10)]
+    region=dict(id='container_A',kind='container',box=[.4,.3,.9,.8])
+    action=dict(id='place_1',behavior='placing / putting down',start_time=.5,end_time=1.4,
+                participants=['person_1'],objects=[dict(id='object_1',class_name='cardboard box')])
+    assert surface_suggestions([],frames,[region])==[]
+    rows=surface_suggestions([action],frames,[region])
+    assert len(rows)==1
+    assert rows[0]['behavior']=='possible container-region placement'
+    assert rows[0]['details']['action_ids']==['place_1']
+    assert rows[0]['confidence'] is None
+    assert 'physical insertion is not verified' in rows[0]['description']
+    assert surface_suggestions([action],[dict(f,camera_state='moving') for f in frames],[region])==[]

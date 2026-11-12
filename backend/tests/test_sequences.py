@@ -44,3 +44,42 @@ def test_repeated_and_custom_definition():
     assert any(e['behavior']=='repeated_pickup_placement' for e in rows)
     definition=ActivityDefinition('custom',(Step(('picking up / lifting',)),Step(('releasing',),optional=True)))
     assert recognize_activities(complete()[:1],definitions=[definition])[0]['details']['sequence_status']=='complete'
+
+
+def test_repeated_destination_region_placement_requires_complete_distinct_objects():
+    # Actual image-region lookup, no mocked spatial conclusions.
+    regions=[dict(id='container_A',kind='container',box=[.5,.3,.9,.8])]
+    frames=[dict(time=i/5,camera_state='static',items=[
+        dict(id='p',class_name='person',box=[.1,.1,.2,.7]),
+        dict(id='o',class_name='cardboard box',box=[.6,.4,.7,.6]),
+        dict(id='b',class_name='cardboard box',box=[.7,.4,.8,.6]),
+    ]) for i in range(36)]
+    actions=complete()+complete(o='b',offset=4)
+    rows=recognize_activities(actions,frames,regions)
+    matching=[r for r in rows if r['behavior']=='repeated_destination_region_placement']
+    assert len(matching)==1
+    row=matching[0]
+    assert row['details']['destination_region']=='container_A'
+    assert row['details']['destination_region_kind']=='container'
+    assert len(row['details']['action_ids'])==6
+    assert {o['id'] for o in row['objects']}=={'o','b'}
+    assert row['confidence'] is None and row['review_status']=='needs_review'
+    assert 'not established' in row['description']
+    assert not any(r['behavior']=='packing' for r in rows)
+
+
+def test_region_grouping_never_claims_success_without_reliable_evidence():
+    regions=[dict(id='container_A',kind='container',box=[.5,.3,.9,.8])]
+    frames=[dict(time=i/5,camera_state='moving',items=[
+        dict(id='p',class_name='person',box=[.1,.1,.2,.7]),
+        dict(id='o',class_name='cardboard box',box=[.6,.4,.7,.6]),
+        dict(id='b',class_name='cardboard box',box=[.7,.4,.8,.6]),
+    ]) for i in range(36)]
+    actions=complete()+complete(o='b',offset=4)
+    assert not any(r['behavior']=='repeated_destination_region_placement'
+                   for r in recognize_activities(actions,frames,regions))
+    # Repeated movement of one object is not proof of several objects being packed.
+    frames=[dict(f,camera_state='static') for f in frames]
+    same_object=complete()+complete(offset=4)
+    assert not any(r['behavior']=='repeated_destination_region_placement'
+                   for r in recognize_activities(same_object,frames,regions))
