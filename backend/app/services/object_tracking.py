@@ -31,7 +31,7 @@ def get_object_model():
 
 class ObjectTracker:
     def __init__(self,model,fps=2):
-        self.model=model;self.fps=fps;self.aliases={};self.last={};self.count=0
+        self.model=model;self.fps=fps;self.aliases={};self.last={};self.count=0;self.recovered_count=0
         names=getattr(model,'names',None)
         names=names if isinstance(names,dict) else dict(enumerate(names)) if names is not None else None
         self.classes=[int(i) for i,label in names.items() if label!='person'] if names is not None else list(range(1,80))
@@ -50,6 +50,8 @@ class ObjectTracker:
         if result.boxes is None or result.boxes.id is None:return {}
         boxes=result.boxes.xyxy.cpu().numpy();ids=result.boxes.id.cpu().numpy();classes=result.boxes.cls.cpu().numpy()
         output={}
+        # Never reassign an alias from a raw track still present in this frame.
+        observed_ids={int(raw_id) for raw_id in ids if np.isfinite(raw_id)}
         for box,raw_id,cls in zip(boxes,ids,classes):
             if not np.isfinite(box).all() or not np.isfinite(raw_id) or not np.isfinite(cls) or box[2]<=box[0] or box[3]<=box[1]:continue
             label=result.names[int(cls)]
@@ -67,9 +69,31 @@ class ObjectTracker:
             if ambiguous:
                 self.last.pop(key,None);continue
             cx,cy=(float(box[0]+box[2])/2,float(box[1]+box[3])/2)
-            if (previous is None or t-previous[0]>1.6/self.fps or previous[1]!=label or
-                math.dist((cx,cy),previous[2])>max(40,2*max(box[2]-box[0],box[3]-box[1]))):
-                self.count+=1;self.aliases[key]=f'object_{self.count}'
+            discontinuous=(previous is None or t-previous[0]>1.6/self.fps or previous[1]!=label or
+                math.dist((cx,cy),previous[2])>max(40,2*max(box[2]-box[0],box[3]-box[1])))
+            if discontinuous:
+                # Short-gap conservative ByteTrack ID recovery. Only one prior
+                # inactive same-class track can qualify, with a clear distance
+                # margin to the runner-up. Never bridge missing detection frames
+                # into manipulation evidence; this only repairs the displayed ID.
+                candidates=[]
+                if previous is None:
+                    for old_id,(old_t,old_label,old_center) in self.last.items():
+                        dt=t-old_t
+                        if old_id in observed_ids or old_label!=label or not 0<dt<=1.05/self.fps:
+                            continue
+                        gap=math.dist((cx,cy),old_center)
+                        limit=min(20.,.3*max(box[2]-box[0],box[3]-box[1]))
+                        if gap<=limit and old_id in self.aliases:
+                            candidates.append((gap,old_id))
+                candidates.sort()
+                if candidates and (len(candidates)==1 or candidates[1][0]>candidates[0][0]*2+2):
+                    old_id=candidates[0][1]
+                    self.aliases[key]=self.aliases.pop(old_id)
+                    self.last.pop(old_id,None)
+                    self.recovered_count+=1
+                else:
+                    self.count+=1;self.aliases[key]=f'object_{self.count}'
             self.last[key]=(t,label,(cx,cy))
             output[self.aliases[key]]=dict(class_name=label,box=[float(v) for v in box])
         return output

@@ -277,7 +277,7 @@ def analyze(path, metadata):
         if scene_cut_frames:
             warnings.append(f"Detected {scene_cut_frames} possible scene changes; behavior histories were reset at those boundaries.")
         import resource
-        metrics = dict(seconds=round(time.perf_counter()-started, 3), sampled_frames=frame_count, object_inference_frames=object_frames, object_tracks=object_tracker.count if object_tracker else 0, camera_gated_frames=camera_gated_frames, camera_unknown_frames=camera_unknown_frames, camera_compensated_frames=camera_compensated_frames, scene_cut_frames=scene_cut_frames, peak_tracked_people=peak_people, anonymous_tracks=len(seen), annotations=len(predictions), device=selected_device,
+        metrics = dict(seconds=round(time.perf_counter()-started, 3), sampled_frames=frame_count, object_inference_frames=object_frames, object_tracks=object_tracker.count if object_tracker else 0, object_track_recoveries=object_tracker.recovered_count if object_tracker else 0, camera_gated_frames=camera_gated_frames, camera_unknown_frames=camera_unknown_frames, camera_compensated_frames=camera_compensated_frames, scene_cut_frames=scene_cut_frames, peak_tracked_people=peak_people, anonymous_tracks=len(seen), annotations=len(predictions), device=selected_device,
                        process_peak_rss_bytes=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if __import__('sys').platform == 'darwin' else 1024))
         print("Local analysis:", metrics, flush=True)
         return AnalysisResult(predictions,detections,warnings,metrics)
