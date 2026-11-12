@@ -13,6 +13,7 @@ from pathlib import Path
 
 from app.schemas import EvaluationRequest
 from app.services.evaluation import evaluate
+from app.services.error_analysis import error_report
 
 
 def summarize(scopes):
@@ -36,7 +37,7 @@ def summarize(scopes):
         recall=tp / (tp + fn) if tp + fn else None,
         f1=2 * tp / (2 * tp + fp + fn) if 2 * tp + fp + fn else None,
     )
-    return {"summary": totals, "scopes": results}
+    return {"summary": totals, "scopes": results, "error_analysis": error_report(results)}
 
 
 def main():
