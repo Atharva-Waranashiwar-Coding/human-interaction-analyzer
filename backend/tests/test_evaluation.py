@@ -59,3 +59,15 @@ def test_offline_benchmark_requires_explicit_independent_truth_scope():
                         annotations=[row()])])
     with pytest.raises(ValueError,match='nonempty scopes'):
         summarize([])
+
+
+def test_evaluation_surfaces_exact_unmatched_error_examples():
+    original=dict(row(),participants=['wrong'])
+    pred=row(original_suggestion=original)
+    truth=dict(row(evaluation_role='ground_truth'),id='independent-truth')
+    result=evaluate([pred,truth],request(complete_ground_truth=True))
+    assert result['summary']['false_positives']==1
+    assert result['summary']['false_negatives']==1
+    assert result['false_positive_examples'][0]['behavior']=='carrying'
+    assert result['missed_ground_truth_examples'][0]['id']=='independent-truth'
+    assert result['false_positive_examples'][0]['start_time']==0
