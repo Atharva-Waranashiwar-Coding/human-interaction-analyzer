@@ -1,0 +1,3 @@
+# Optional setup-only text encoder for the cached YOLO-World box vocabulary.
+# Runtime inference uses saved text embeddings, with no text model or API.
+git+https://github.com/ultralytics/CLIP.git@7ffa84b3bfa40c42ecc1c77147a855e69cb2dd40

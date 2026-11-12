@@ -1,0 +1,43 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+
+# Node
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Project data
+backend/data/
+backend/.pytest_cache/
+
+# Editor
+.vscode/
+.DS_Store
+
+# Secrets
+.env
+.env.local
+
+backend/app/data/
+*.pt
+*.onnx
+.pytest_cache/
+*.tsbuildinfo
+frontend/.next-build/
+
+# Local configuration and credentials
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Runtime artifacts
+*.log
+*.sqlite
+*.sqlite3
+*.db
