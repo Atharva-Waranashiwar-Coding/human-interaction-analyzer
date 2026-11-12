@@ -108,3 +108,24 @@ def test_pose_feature_builder_normalizes_and_masks_missing_anchors():
     assert len(output["features"][0])==51
     assert output["features"][-1]==[0.0]*51
     assert output["features"][0][11*3+2]==1.0
+
+
+def test_scoped_regression_comparison_rejects_different_evaluation_scopes():
+    from app.services.error_analysis import compare_reports
+    from evaluate_fixture import summarize
+    original=dict(id="prediction",behavior="walking",start_time=0,end_time=1,
+                  participants=["p"],objects=[])
+    predicted=dict(original,id="review",review_status="reviewed",
+                   original_suggestion=original)
+    truth=dict(original,id="truth",review_status="reviewed",
+               evaluation_role="ground_truth")
+    req=dict(covered_behaviors=["walking"],end_time=3,
+             complete_ground_truth=True,scenario="static")
+    baseline=summarize([dict(request=req,annotations=[predicted,truth])])
+    current=summarize([dict(request=req,annotations=[predicted,truth])])
+    comparison=compare_reports(current,baseline)
+    assert comparison["summary_delta"]["f1"]==0
+    changed=summarize([dict(request=dict(req,scenario="moving"),
+                            annotations=[predicted,truth])])
+    with pytest.raises(ValueError,match="different evaluation scopes"):
+        compare_reports(changed,baseline)
