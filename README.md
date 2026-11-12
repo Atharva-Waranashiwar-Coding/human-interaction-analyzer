@@ -419,3 +419,24 @@ The `feature/workflow-evidence-v2` extension adds two conservative, reviewable a
 Both types begin as `needs_review` with `confidence: null`; their evidence links to existing action IDs. Camera motion, missing stable region observations, incomplete action sequences and ambiguous regions suppress the corresponding suggestions. Existing behaviors are unchanged. No new inference models or dependencies were introduced.
 
 **Validation required before merge:** run `.venv/bin/python -m pytest backend/tests -q` and `cd frontend && npm run build` in a configured environment. New synthetic unit tests cover positive and negative cases, but independent real-video ground truth is still required to measure accuracy.
+
+
+### Experimental planar manipulation suggestions
+
+The object activity engine now uses the existing camera-stabilized trajectories,
+single-person wrist/object association and sustained lateral movement to suggest
+`pushing an object` (movement away from the person), `pulling an object`
+(movement toward the person) and `dragging / sliding an object` (lateral
+movement without a clear relative-distance direction). These are geometry-based
+review suggestions, **not proof of contact, force or surface sliding**.
+
+A candidate requires a continuously visible wrist following the object for at
+least 0.8 seconds, horizontal displacement of at least 0.2 body heights, minimal
+vertical motion, a relatively stationary torso, consistent motion direction,
+and uninterrupted object tracking. Unknown camera motion, tracking gaps and
+ambiguous multiple-person associations suppress candidates. No new models,
+database migrations, paid services, or frontend dependencies are introduced.
+
+Check these rules with independent real-video labels before treating them as
+accurate. Run `.venv/bin/python -m pytest backend/tests -q` and
+`cd frontend && npm run build` to check for regressions.

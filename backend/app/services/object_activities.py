@@ -148,7 +148,9 @@ class ObjectActivities:
             # All associations are evidence, not ownership; ambiguous multiple hands stay ambiguous.
             snapshot=dict(obj=dict(box=tuple(box),class_name=obj['class_name']),people={pid:dict(
                 center=tuple(torso(p) or p['center']),height=float(p['height']),gap=hand_gap(p,obj),
-                reach=object_arm_reach(p,obj)) for pid,p in people.items() if p['height']>0},
+                reach=object_arm_reach(p,obj),
+                wrists=tuple(tuple(p['pose'][i][:2]) for i in (9,10) if valid(p,i)))
+                for pid,p in people.items() if p['height']>0},
                 near=tuple(sorted(associated)))
             hist=self.history.get(oid)
             if hist:
@@ -215,6 +217,11 @@ class ObjectActivities:
                 delta=sub(p['center'],recent[0][1]['people'][pid]['center'])
                 if abs(delta[0])>.18*h and abs(delta[1])<.15*h:
                     self.emit('walking while carrying',[pid],oid,cls,recent[0][0],t,'Sustained lateral person/object co-motion with stable hand association; gait and physical support are unconfirmed.')
+        # Conservative planar manipulation: observed wrist and object co-motion
+        # with a relatively stationary torso. Does not assert contact or force.
+        if near:
+            self._planar_manipulation(oid,pid,cls,recent)
+
         # Before/after transitions require observed states, never missing-object inference.
         for j in range(2,len(history)-2):
             ct,contact=history[j]
@@ -237,6 +244,72 @@ class ObjectActivities:
                 if pre_boxes[-1][1]-pre_boxes[0][1]>.12*h and post[-3][1]['near']==(pid,):
                     self.emit('placing / putting down',[pid],oid,cls,pre[0][0],t,'A hand-associated object moved downward, then remained visibly stationary as the wrist separated; support surface is unconfirmed.')
                 self.emit('releasing',[pid],oid,cls,ct,t,'A previously sustained wrist association ended while the object remained visible and approximately stationary.')
+
+    def _planar_manipulation(self,oid,pid,cls,recent):
+        """Suggest planar object motion only with sustained single-hand evidence.
+
+        Restrict to horizontal image motion and a stationary torso to avoid
+        mistaking lifting or co-moving carrying for a push/pull. Track epochs,
+        camera reliability, and visibility are enforced by the caller.
+        """
+        if len(recent)<3 or recent[-1][0]-recent[0][0]<.8:
+            return
+        if any(row['near']!=(pid,) or pid not in row['people'] for _,row in recent):
+            return
+        first=recent[0][1];last=recent[-1][1]
+        h=last['people'][pid]['height']
+        if h<=0:
+            return
+        obj_start=center(first['obj']['box']);obj_end=center(last['obj']['box'])
+        dx=(obj_end[0]-obj_start[0])/h
+        dy=(obj_end[1]-obj_start[1])/h
+        body_start=first['people'][pid]['center'];body_end=last['people'][pid]['center']
+        if abs(dx)<.20 or abs(dy)>.10 or math.dist(body_start,body_end)/h>.12:
+            return
+        # Find one continuously visible wrist following the observed object.
+        # Switching between hands can falsely simulate interaction.
+        wrist_tracks=[]
+        for wrist_idx in (0,1):
+            path=[]
+            for _,row in recent:
+                wrists=row['people'][pid]['wrists']
+                if len(wrists)!=2:
+                    path=[];break
+                wrist=wrists[wrist_idx]
+                if distance_to_box(wrist,row['obj']['box'])/row['people'][pid]['height']>=.12:
+                    path=[];break
+                path.append(wrist)
+            if path:
+                wrist_tracks.append(path)
+        if not wrist_tracks:
+            return
+        if not any(
+            (track[-1][0]-track[0][0])*dx>0 and
+            abs((track[-1][0]-track[0][0])/h-dx)<.12 and
+            abs((track[-1][1]-track[0][1])/h-dy)<.12
+            for track in wrist_tracks
+        ):
+            return
+        # Reject abrupt reversals and intermittent displacement.
+        xs=[center(row['obj']['box'])[0] for _,row in recent]
+        increments=[b-a for a,b in zip(xs,xs[1:])]
+        if sum(step*dx>0 for step in increments)<len(increments)-1:
+            return
+        # Only a change in body-relative distance distinguishes these labels.
+        # Otherwise report the observable sliding motion without intent.
+        d0=math.dist(obj_start,body_start)/h
+        d1=math.dist(obj_end,body_end)/h
+        difference=d1-d0
+        if difference>.15:
+            label='pushing an object'
+            evidence='The visible object and a continuously nearby wrist moved laterally away from a mostly stationary torso. Direction is consistent with pushing but force and contact are unconfirmed.'
+        elif difference<-.15:
+            label='pulling an object'
+            evidence='The visible object and a continuously nearby wrist moved laterally toward a mostly stationary torso. Direction is consistent with pulling but force and contact are unconfirmed.'
+        else:
+            label='dragging / sliding an object'
+            evidence='The visible object and a continuously nearby wrist moved laterally while the torso stayed approximately stationary. Surface contact and sliding are unconfirmed.'
+        self.emit(label,[pid],oid,cls,recent[0][0],recent[-1][0],evidence)
 
     def _transfer(self,oid,hist):
         # Require stable donor-only and recipient-only states, with an observed shared phase.
