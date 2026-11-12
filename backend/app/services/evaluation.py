@@ -51,5 +51,9 @@ def evaluate(annotations, request, review_log=()):
     total={k:sum(c[k] for c in counts.values()) for k in ('true_positives','false_positives','false_negatives')}
     return dict(available=True,scenario=request.scenario,scope=request.model_dump(),matching='Exact behavior, participant IDs and object ID/class sets, with temporal IoU threshold; one-to-one maximum matching.',
                 summary=metrics(total),per_behavior={label:metrics(counts[label]) for label in sorted(labels)},
+                false_positive_examples=[dict(id=p.get('id'),behavior=p['behavior'],start_time=p['start_time'],end_time=p['end_time'])
+                    for i,p in enumerate(predictions) if i not in matched],
+                missed_ground_truth_examples=[dict(id=g.get('id'),behavior=g['behavior'],start_time=g['start_time'],end_time=g['end_time'])
+                    for j,g in enumerate(truth) if j not in assigned],
                 reviewed_predictions=len(predictions),ground_truth_annotations=len(truth),
                 unreviewed_predictions_excluded=sum(bool(a.get('original_suggestion')) and a.get('review_status')=='needs_review' and in_scope(a['original_suggestion']) for a in annotations))
