@@ -430,3 +430,52 @@ def test_planar_manipulation_rejects_weak_or_interrupted_evidence(case):
         rules.step(time,{'p':p},objects,camera_motion=case=='moving_camera')
     assert not any(e['behavior'] in {'pushing an object','pulling an object','dragging / sliding an object'}
                    for e in rules.results())
+
+
+def test_unique_short_gap_object_id_recovery():
+    model,_=fake_model([
+        ([[0,0,20,20]],[1],[39]),
+        ([[1,0,21,20]],[9],[39]),
+    ])
+    tracker=ObjectTracker(model,2)
+    first=tracker.step(0,None,'cpu',640)
+    second=tracker.step(.5,None,'cpu',640)
+    assert list(first)==list(second)
+    assert tracker.recovered_count==1
+    assert tracker.count==1
+
+
+def test_no_recovery_after_long_gap_or_class_change():
+    model,_=fake_model([
+        ([[0,0,20,20]],[1],[39]),
+        ([[1,0,21,20]],[9],[39]),
+    ])
+    tracker=ObjectTracker(model,2)
+    before=tracker.step(0,None,'cpu',640)
+    after=tracker.step(1,None,'cpu',640)
+    assert list(before)!=list(after)
+    assert tracker.recovered_count==0
+
+
+def test_ambiguous_short_gap_creates_new_alias():
+    model,_=fake_model([
+        ([[0,0,20,20],[3,0,23,20]],[1,2],[39,39]),
+        ([[2,0,22,20]],[9],[39]),
+    ])
+    tracker=ObjectTracker(model,2)
+    tracker.step(0,None,'cpu',640)
+    after=tracker.step(.5,None,'cpu',640)
+    assert 'object_3' in after
+    assert tracker.recovered_count==0
+
+
+def test_simultaneously_observed_raw_ids_never_alias_each_other():
+    model,_=fake_model([
+        ([[0,0,20,20]],[1],[39]),
+        ([[1,0,21,20],[2,0,22,20]],[1,9],[39,39]),
+    ])
+    tracker=ObjectTracker(model,2)
+    tracker.step(0,None,'cpu',640)
+    after=tracker.step(.5,None,'cpu',640)
+    assert len(after)==2
+    assert tracker.recovered_count==0
