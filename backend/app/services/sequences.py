@@ -87,4 +87,38 @@ def recognize_activities(actions, frames=(), regions=(), definitions=DEFAULT_DEF
                 start_time=batch[0]['start_time'],behavior='repeated_pickup_placement',objects=list(objects.values()),
                 details=dict(activity_type='repeated_pickup_placement',action_ids=ids,sequence_status='complete',missing_steps=[]),
                 description='At least two complete pickup, carry and placement patterns by the same participants; packing, sorting and loading are not established.'))
+    # Repeated verified action sequences toward the same configured image region.
+    # This remains an observation, not a packing, sorting or loading classifier.
+    region_kinds={r['id']:r.get('kind') for r in regions if r.get('id')}
+    destination_groups={}
+    for e in relocations:
+        destination=e['details'].get('destination_region')
+        if region_kinds.get(destination) not in {'container','shelf','table'}:
+            continue
+        if len(e['objects'])!=1:
+            continue
+        destination_groups.setdefault((tuple(e['participants']),destination),[]).append(e)
+    for (participants,destination),group in destination_groups.items():
+        batch=[]
+        for e in sorted(group,key=lambda e:(e['start_time'],e['end_time'])):
+            # Keep separate objects and nonoverlapping complete evidence within 60s.
+            if batch and (e['start_time']<batch[-1]['end_time'] or
+                          e['end_time']-batch[0]['start_time']>60 or
+                          e['objects'][0]['id'] in {b['objects'][0]['id'] for b in batch}):
+                batch=[]
+            batch.append(e)
+            if len(batch)<2:
+                continue
+            ids=list(dict.fromkeys(aid for b in batch for aid in b['details']['action_ids']))
+            output.append(dict(
+                id=uuid.uuid5(uuid.NAMESPACE_URL,'destination:'+destination+':'+':'.join(ids)).hex,
+                start_time=batch[0]['start_time'],end_time=e['end_time'],
+                behavior='repeated_destination_region_placement',annotation_kind='activity',
+                details=dict(activity_type='repeated_destination_region_placement',
+                             destination_region=destination,destination_region_kind=region_kinds[destination],
+                             action_ids=ids,sequence_status='complete',missing_steps=[]),
+                participants=list(participants),objects=[b['objects'][0] for b in batch],
+                source='local_sequence',review_status='needs_review',confidence=None,rule_version=VERSION,
+                description='At least two distinct objects have complete pickup/carry/placement action sequences ending in the same configured image region. Physical containment, task intent and successful packing, sorting or loading are not established.',
+            ))
     return output
