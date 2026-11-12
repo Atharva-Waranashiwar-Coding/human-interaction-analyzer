@@ -478,3 +478,104 @@ cd frontend && npm run build
 ```
 
 The runner performs no video inference, remote requests, storage migrations, or dataset training. It reports per-scope precision/recall/F1 and pooled TP/FP/FN using the existing evaluation matcher. Use separate static-camera, moving-camera, occlusion, crowded-scene and partial-body scopes to compare regressions. Calibration and end-to-end benchmark accuracy remain unknown until representative ground truth is supplied. This change introduces no new model, dependency, UI, or deployment work.
+
+
+### Experimental local dataset, evaluation, complex activities, and temporal ML
+
+The optional tools below add **no deployment, network service, new default model
+download, training data, or inference integration**. They reuse the project's
+reviewed-annotation evaluation contract, existing frame caches and regions.
+
+**1. Build an independent video evaluation set**
+
+Store a private manifest at `backend/private-datasets/manifest.json`, with
+20 to 30 short clips as an initial target across static camera, moving camera,
+occlusion, crowded scenes, low lighting, and partial-body views. Prefer clips
+from different recordings/people/settings across train/validation/test. Use
+explicit `source_group` to keep multiple clips from one recording together.
+All labels must be independently reviewed, including missed actions and
+verified empty intervals. Never use automatically accepted predictions as
+ground truth.
+
+Each manifest entry must contain:
+`clip_id`, `scenario` (static/moving/occlusion/crowded/low_light/partial_body),
+`duration` in seconds, `video_path`, `annotations_path`, `reviewer`,
+`split` (train/validation/test), and `ground_truth_complete: true`.
+Optional `source_group` links adjacent clips from the same source. Video and
+annotation paths must be relative to the private manifest directory.
+
+Run `.venv/bin/python backend/validate_dataset.py backend/private-datasets/manifest.json --verify-files`.
+The validator checks structure, missing files, split leakage and declared
+review completeness. It **cannot independently prove** that annotation content
+is accurate or that reviewing truly happened.
+
+**2. Evaluate and identify failure cases**
+
+Using privately exported reviewed predictions and independently created
+ground truth, populate the existing `scopes` format described above.
+
+```bash
+.venv/bin/python backend/evaluate_fixture.py backend/private-datasets/scopes.json --output backend/private-datasets/baseline.json
+.venv/bin/python backend/evaluate_fixture.py backend/private-datasets/scopes-next.json --baseline backend/private-datasets/baseline.json --output backend/private-datasets/next.json
+```
+
+Outputs include TP/FP/FN, precision/recall/F1 by behavior and scenario,
+timestamped false-positive/missed-action examples and matched-scope baseline
+deltas. The comparison checks scenario, behavior coverage, time window and
+IoU threshold. You must ensure both runs use exactly the same reviewed videos
+and independent ground truth before interpreting any difference.
+
+**3. Candidate complex activity understanding**
+
+The cached enrichment flow now adds:
+
+- `possible repeated container-region removal`: two distinct objects have
+  complete relocation evidence from the same configured container region
+  into other known regions, consistent with a portion of an unpacking-like
+  workflow.
+- `possible multi-region object distribution`: two distinct objects leave
+  one configured source region and finish in different configured
+  destinations, consistent with a portion of a sorting-like workflow.
+
+These do not prove unpacking, sorting, stacking, loading, insertion, physical
+contact or task success. They require complete existing action sequences and
+static-camera region support, remain `needs_review` with `confidence: null`,
+and reference original actions in `details.action_ids`. No new detector runs.
+
+**4. Optional PyTorch pose-sequence baseline**
+
+This experiment is opt-in and does **not** modify application predictions.
+Install PyTorch separately in your local virtual environment using the
+appropriate official instructions for your operating system. Prepare reviewed
+pose JSONL rows inside `backend/private-datasets/` with:
+
+```json
+{"label":"walking","split":"train","group":"video_001","poses":[[[0.0,0.0,0.9]],[[0.0,0.0,0.9]],[[0.0,0.0,0.9]]]}
+```
+
+The sample above illustrates the structure, **not valid 17-joint input**.
+Each element of `poses` must contain **17** `[x,y,confidence]` joints
+in COCO order, and every sequence must have the same number of frames.
+Provide at least two action labels in training; all labels must be represented
+in training, with separate nonoverlapping `group` values across the three splits.
+Normalize keypoints to the hip/shoulder reference frame, masking low-confidence
+joints, with:
+
+```bash
+.venv/bin/python backend/build_pose_features.py backend/private-datasets/pose-windows.jsonl backend/private-datasets/features.jsonl
+.venv/bin/python backend/temporal_experiment.py backend/private-datasets/features.jsonl --epochs 20 --output backend/private-datasets/temporal-report.json
+```
+
+The optional model is a 2-layer temporal CNN trained with train-only
+normalization, validation-loss model selection and a held-out test confusion
+matrix. It prints empirical test accuracy without any claim of general video
+accuracy. No trained checkpoint is exported or pushed to Git; model evaluation
+and generalization need representative labeled samples and comparison with the
+rule baseline on the same data.
+
+For the current branch, run tests from the repository root:
+
+```bash
+.venv/bin/python -m pytest backend/tests -q
+cd frontend && npm run build
+```
