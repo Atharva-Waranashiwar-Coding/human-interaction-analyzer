@@ -390,3 +390,43 @@ def test_stationary_object_proximity_then_hand_withdrawal_is_not_release():
         return {'p':person(wrist=(60,90) if t<2 else (10,60))},{'o':obj()}
     events=evaluate(scene,4)
     assert not any(e['behavior'] in {'releasing','holding','placing / putting down'} for e in events)
+
+
+def test_planar_pushing_candidate_with_sustained_wrist_object_motion():
+    def scene(time):
+        x=60+20*time
+        p=person(wrist=(x,90))
+        # Both wrist tracks are visible, but only one is near the object.
+        return {'p':p},{'o':obj(x,90)}
+    labels={e['behavior'] for e in evaluate(scene,2)}
+    assert 'pushing an object' in labels
+    assert 'carrying' not in labels
+    assert 'picking up / lifting' not in labels
+
+
+def test_planar_pulling_candidate_moves_toward_stationary_torso():
+    def scene(time):
+        x=120-20*time
+        return {'p':person(wrist=(x,90))},{'o':obj(x,90)}
+    labels={e['behavior'] for e in evaluate(scene,2)}
+    assert 'pulling an object' in labels
+    assert 'carrying' not in labels
+
+
+@pytest.mark.parametrize('case',['no_wrist','static','independent','moving_body','moving_camera','track_gap'])
+def test_planar_manipulation_rejects_weak_or_interrupted_evidence(case):
+    rules=ObjectActivities(2)
+    for i in range(7):
+        time=i/2
+        x=60+20*time
+        p=person(wrist=(x if case!='independent' else 10,90))
+        if case=='no_wrist':
+            p['pose'][9][2]=0;p['pose'][10][2]=0
+        if case=='moving_body':
+            p=person(x=20*time,wrist=(x,90))
+        objects={'o':obj(60 if case=='static' else x,90)}
+        if case=='track_gap' and time==1:
+            objects={}
+        rules.step(time,{'p':p},objects,camera_motion=case=='moving_camera')
+    assert not any(e['behavior'] in {'pushing an object','pulling an object','dragging / sliding an object'}
+                   for e in rules.results())
