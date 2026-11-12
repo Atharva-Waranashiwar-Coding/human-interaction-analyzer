@@ -13,7 +13,7 @@ from pathlib import Path
 
 from app.schemas import EvaluationRequest
 from app.services.evaluation import evaluate
-from app.services.error_analysis import error_report
+from app.services.error_analysis import error_report, compare_reports
 
 
 def summarize(scopes):
@@ -44,9 +44,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("fixture", type=Path, help="Path to a local JSON evaluation fixture")
     parser.add_argument("--output", type=Path, help="Optional path to save deterministic JSON results")
+    parser.add_argument("--baseline", type=Path, help="Optional previous benchmark report for scoped regression comparison")
     args = parser.parse_args()
     payload = json.loads(args.fixture.read_text(encoding="utf-8"))
     report = summarize(payload["scopes"])
+    if args.baseline:
+        baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
+        report["regression_comparison"] = compare_reports(report, baseline)
     serialized = json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n"
     if args.output:
         args.output.write_text(serialized, encoding="utf-8")
