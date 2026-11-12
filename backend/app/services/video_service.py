@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 import os
 import re
 import tempfile
@@ -12,6 +13,7 @@ from fastapi import HTTPException, UploadFile
 
 from ..database import SessionLocal
 from ..models import Annotation, Video
+from .annotation_data import serialize_annotation, snapshot, AUTOMATIC_SOURCES
 
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".webm"}
 MAX_VIDEO_SIZE_BYTES = int(os.getenv("MAX_VIDEO_SIZE_BYTES", "52428800"))
@@ -215,8 +217,14 @@ def run_model_inference(video_path: Path, metadata: dict[str, Any]) -> list[dict
 def create_annotation_records(video_id: str, prediction_list: list[dict[str, Any]]) -> list[Annotation]:
     annotations: list[Annotation] = []
     for item in prediction_list:
+        item = dict(item, id=item.get("id") or uuid.uuid4().hex)
+        version = item.get("rule_version") or ("local-rules-v1" if item.get("source")=="local_model" else None)
         annotation = Annotation(
             id=item.get("id"),
+            annotation_kind=item.get("annotation_kind", "behavior"),
+            details=json.dumps(item.get("details") or {}),
+            original_suggestion=json.dumps(snapshot(dict(item, rule_version=version))) if item.get('source') in AUTOMATIC_SOURCES else '{}',
+            rule_version=version,
             objects=json.dumps(item.get("objects") or []),
             parent_activity_id=item.get("parent_activity_id"),
             video_id=video_id,
@@ -239,22 +247,10 @@ def build_export_payload(video: Video, annotations: list[Annotation]) -> dict[st
     return {
         "video_id": video.id,
         "duration": float(video.duration),
-        "annotations": [
-            {
-                "id": item.id,
-                "start_time": float(item.start_time),
-                "end_time": float(item.end_time),
-                "behavior": item.behavior,
-                "participants": json.loads(item.participants or "[]"),
-                "objects": json.loads(item.objects or "[]"),
-                "parent_activity_id": item.parent_activity_id,
-                "description": item.description,
-                "source": item.source,
-                "confidence": item.confidence,
-                "review_status": item.review_status,
-            }
-            for item in annotations
-        ],
+        "annotations": [serialize_annotation(item) for item in annotations],
+        "scene_regions": json.loads(video.scene_regions or '[]'),
+        "audio_metadata": json.loads(video.audio_metadata or '{}'),
+        "review_log": json.loads(video.review_log or '[]'),
     }
 
 

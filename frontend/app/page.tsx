@@ -3,21 +3,9 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import DetectionOverlay from '../components/DetectionOverlay';
 
-type ObjectReference = { id: string; class_name: string };
-
-type Annotation = {
-  id?: string;
-  start_time: number;
-  end_time: number;
-  behavior: string;
-  participants: string[];
-  objects?: ObjectReference[];
-  parent_activity_id?: string | null;
-  description: string;
-  source: string;
-  confidence?: number | null;
-  review_status: string;
-};
+import { Annotation, ObjectReference } from '../lib/types';
+import ActivitySearch from '../components/ActivitySearch';
+import UnderstandingPanel from '../components/UnderstandingPanel';
 
 type VideoItem = {
   id: string;
@@ -74,6 +62,7 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
 export default function HomePage() {
   const [videos, setVideos] = useState<VideoItem[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
+  const pendingAnnotationRef = useRef<string | undefined>();
   const selectedVideoIdRef = useRef(selectedId);
   selectedVideoIdRef.current = selectedId;
   const [selectedVideo, setSelectedVideo] = useState<any | null>(null);
@@ -81,7 +70,9 @@ export default function HomePage() {
   const [uploading, setUploading] = useState(false);
   const [uploadResults, setUploadResults] = useState<{ name: string; error?: string }[]>([]);
   const [statusMessage, setStatusMessage] = useState('');
-  const [videoTab, setVideoTab] = useState<'review' | 'table'>('review');
+  const [videoTab, setVideoTab] = useState<'review' | 'table' | 'advanced'>('review');
+  const [seekRequest, setSeekRequest] = useState<{time: number; key: number} | undefined>();
+  const [editorKind, setEditorKind] = useState('behavior');
   const [annotationFilter, setAnnotationFilter] = useState('');
   const [detectionPage, setDetectionPage] = useState(0);
   const [exportFormat, setExportFormat] = useState<'json' | 'jsonl'>('json');
@@ -95,8 +86,12 @@ export default function HomePage() {
     try {
       const data = await apiFetch<VideoItem[]>('/api/videos');
       setVideos(data);
-      if (selectFirst && !selectedId && data[0]) {
-        setSelectedId(data[0].id);
+      if (selectFirst && !selectedVideoIdRef.current && data[0]) {
+        const params = new URLSearchParams(window.location.search);
+        const requested = data.find(v=>v.id===params.get('video'));
+        setSelectedId(requested?.id || data[0].id);
+        const time = Number(params.get('time'));
+        if (requested && Number.isFinite(time) && time>=0) setSeekRequest({time,key:Date.now()});
       }
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : 'Unable to load videos');
@@ -110,6 +105,11 @@ export default function HomePage() {
       if (selectedVideoIdRef.current !== videoId) return;
       setSelectedVideo(detail);
       setAnnotations(detail.annotations || []);
+      if(pendingAnnotationRef.current){
+        const match=(detail.annotations || []).find((a: Annotation)=>a.id===pendingAnnotationRef.current);
+        if(match)setEditorKind(match.annotation_kind || 'behavior');
+        pendingAnnotationRef.current=undefined;
+      }
       setStatusMessage(detail.message || 'Video loaded');
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : 'Unable to load video');
@@ -122,6 +122,7 @@ export default function HomePage() {
 
   useEffect(() => {
     setVideoTab('review');
+    setEditorKind('behavior');
     setAnnotationFilter('');
     setDetectionPage(0);
     if (selectedId) {
@@ -217,11 +218,11 @@ export default function HomePage() {
   const removeAnnotation = (index: number) => {
     setAnnotations((previous) => {
       const removed = previous[index]?.id;
-      return previous.filter((_, itemIndex) => itemIndex !== index).map((item) => item.parent_activity_id === removed ? { ...item, parent_activity_id: null, source: 'manual' } : item);
+      return previous.filter((_, itemIndex) => itemIndex !== index).map((item) => ({ ...item, parent_activity_id: item.parent_activity_id === removed ? null : item.parent_activity_id, details: item.details?.action_ids?.includes(removed) ? { ...item.details, action_ids: item.details.action_ids.filter((id: string)=>id!==removed), sequence_status:'partial' } : item.details }));
     });
   };
 
-  const updateAnnotation = (index: number, field: keyof Annotation, value: string | number | string[] | ObjectReference[] | null) => {
+  const updateAnnotation = (index: number, field: keyof Annotation, value: string | number | string[] | ObjectReference[] | Record<string, any> | null) => {
     setAnnotations((previous) =>
       previous.map((annotation, itemIndex) => {
         if (itemIndex !== index) return annotation;
@@ -266,6 +267,12 @@ export default function HomePage() {
   const pageCount = Math.max(1, Math.ceil(detectionRows.length / 50));
   const visibleDetectionPage = Math.min(detectionPage, pageCount - 1);
 
+  const openResult = (videoId: string, time: number, annotationId?: string) => {
+    pendingAnnotationRef.current=annotationId;
+    setSelectedId(videoId); setVideoTab('review'); setEditorKind(annotations.find(a=>a.id===annotationId)?.annotation_kind || 'behavior'); setSeekRequest({time,key:Date.now()});
+    if (annotationId) setTimeout(()=>document.getElementById(`annotation-editor-${annotationId}`)?.scrollIntoView({behavior:'smooth',block:'center'}),350);
+  };
+
   const selectedVideoUrl = selectedId ? `${API_BASE}/api/videos/${selectedId}/file` : '';
 
   return (
@@ -298,6 +305,7 @@ export default function HomePage() {
           </ul>
         )}
 
+        <ActivitySearch api={API_BASE} videos={videos} onOpen={openResult} />
         <div className="grid gap-6 lg:grid-cols-[320px,1fr]">
           <aside className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div>
@@ -369,10 +377,14 @@ export default function HomePage() {
                   <div role="tablist" aria-label="Selected video views" className="mb-4 flex gap-2 border-b border-slate-200">
                     <button id="review-tab" role="tab" aria-selected={videoTab === 'review'} aria-controls="review-panel" onClick={() => setVideoTab('review')} className={`rounded-t-lg px-4 py-2 text-sm font-semibold ${videoTab === 'review' ? 'bg-sky-100 text-sky-800' : 'text-slate-500'}`}>Video & editor</button>
                     <button id="annotations-tab" role="tab" aria-selected={videoTab === 'table'} aria-controls="annotations-panel" onClick={() => setVideoTab('table')} className={`rounded-t-lg px-4 py-2 text-sm font-semibold ${videoTab === 'table' ? 'bg-sky-100 text-sky-800' : 'text-slate-500'}`}>Annotations table</button>
+                    <button id="advanced-tab" role="tab" aria-selected={videoTab === 'advanced'} aria-controls="advanced-panel" onClick={() => setVideoTab('advanced')} className={`rounded-t-lg px-4 py-2 text-sm font-semibold ${videoTab === 'advanced' ? 'bg-sky-100 text-sky-800' : 'text-slate-500'}`}>Scene and activities</button>
+                  </div>
+                  <div id="advanced-panel" role="tabpanel" aria-labelledby="advanced-tab" hidden={videoTab !== 'advanced'}>
+                    <UnderstandingPanel key={selectedId} api={API_BASE} video={selectedVideo} annotations={annotations} onRefresh={()=>refreshVideoDetail(selectedId)} onEdit={a=>{openResult(selectedId,a.start_time,a.id);setEditorKind(a.annotation_kind || 'behavior');}} onAddAudio={()=>{const next={...emptyAnnotation(),annotation_kind:'audio' as const,behavior:'audio event',participants:[],end_time:Math.min(1,selectedVideo.duration)};setAnnotations(p=>[...p,next]);setEditorKind('audio');setVideoTab('review');}} />
                   </div>
                   <div id="review-panel" role="tabpanel" aria-labelledby="review-tab" hidden={videoTab !== 'review'}>
                   {selectedVideoUrl ? (
-                    <DetectionOverlay key={selectedId} src={selectedVideoUrl} frames={selectedVideo.detections || []} />
+                    <DetectionOverlay key={selectedId} src={selectedVideoUrl} frames={selectedVideo.detections || []} regions={selectedVideo.scene_regions || []} seekRequest={seekRequest} />
                   ) : null}
 
                   </div>
@@ -381,7 +393,7 @@ export default function HomePage() {
                       <input type="search" value={annotationFilter} onChange={(e) => { setAnnotationFilter(e.target.value); setDetectionPage(0); }} placeholder="Behavior, person, object, evidence or status" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
                     </label>
                     <p className="mb-3 text-xs text-slate-500">Includes current edits. Click Save to persist them. Automatic rows remain unverified until reviewed.</p>
-                    <h3 className="mb-2 font-semibold">Behavior annotations ({annotations.length})</h3>
+                    <h3 className="mb-2 font-semibold">Annotations ({annotations.length})</h3>
                     <div className="overflow-x-auto">
                       <table className="w-full border-collapse text-left text-sm">
                         <thead className="bg-slate-100"><tr>{['Time (s)', 'Behavior', 'People', 'Objects', 'Review', 'Evidence', 'Parent activity'].map((heading) => <th key={heading} className="border-b border-slate-200 p-3">{heading}</th>)}</tr></thead>
@@ -428,12 +440,13 @@ export default function HomePage() {
                     </button>
                   </div>
                   <p className="mb-4 text-sm text-slate-500">Automatic annotations are geometry-based suggestions, not confirmed actions. Review the evidence, correct the label, or mark Rejected, then Save.</p>
+                  <label className="mb-4 block text-sm">Show annotation type<select className="ml-2 rounded-lg border p-2" value={editorKind} onChange={e=>setEditorKind(e.target.value)}>{['behavior','spatial','activity','audio','all'].map(k=><option key={k}>{k}</option>)}</select></label>
                   <div className="space-y-4">
                     {annotations.length === 0 ? (
                       <p className="text-sm text-slate-500">No annotations yet. Add one or run analysis.</p>
                     ) : null}
                     {annotations.map((annotation, index) => (
-                      <div key={`${annotation.behavior}-${index}`} className="rounded-xl border border-slate-200 p-3">
+                      <div hidden={editorKind!=='all' && (annotation.annotation_kind || 'behavior')!==editorKind} id={`annotation-editor-${annotation.id}`} key={annotation.id || index} className="rounded-xl border border-slate-200 p-3">
                         <p className="mb-3 text-xs font-medium text-slate-500">{annotation.source === 'local_model' ? 'Automatic review suggestion' : 'Saved / manual annotation'} · {annotation.review_status.replaceAll('_', ' ')}</p>
                         <div className="grid gap-3 md:grid-cols-2">
                           <label className="text-sm text-slate-700">
@@ -479,6 +492,14 @@ export default function HomePage() {
                             </select>
                           </label>
                         </div>
+                        <div className="mt-3 grid gap-3 md:grid-cols-2">
+                          <label className="text-sm">Annotation type<select className="mt-1 w-full rounded-lg border p-2" value={annotation.annotation_kind || 'behavior'} onChange={e=>updateAnnotation(index,'annotation_kind',e.target.value)}>{['behavior','spatial','activity','audio'].map(k=><option key={k}>{k}</option>)}</select></label>
+                          <label className="text-sm">Evaluation role<select className="mt-1 w-full rounded-lg border p-2" value={annotation.evaluation_role || 'unspecified'} onChange={e=>updateAnnotation(index,'evaluation_role',e.target.value)}><option value="unspecified">Not independent ground truth</option><option value="ground_truth" disabled={Boolean(annotation.original_suggestion && Object.keys(annotation.original_suggestion).length)}>Independent manual ground truth</option></select></label>
+                        </div>
+                        {annotation.original_suggestion && Object.keys(annotation.original_suggestion).length>0 && <p className="mt-2 text-xs text-slate-500">Original suggestion: {annotation.original_suggestion.behavior} · Rule: {annotation.rule_version || 'legacy'} · Review changes: {annotation.review_history?.length || 0}</p>}
+                        <label className="mt-3 block text-sm text-slate-700">
+                          Optional reviewer feedback<input className="mt-1 w-full rounded-lg border p-2" value={annotation.reviewer_feedback || ''} onChange={e=>updateAnnotation(index,'reviewer_feedback',e.target.value)} />
+                        </label>
                         <label className="mt-3 block text-sm text-slate-700">
                           Participants
                           <input
@@ -518,6 +539,7 @@ export default function HomePage() {
                             className="mt-1 h-24 w-full rounded-lg border border-slate-300 px-3 py-2"
                           />
                         </label>
+                        {annotation.annotation_kind && annotation.annotation_kind !== 'behavior' && <label className="mt-3 block text-sm">Relationship or sequence details JSON<textarea className="mt-1 w-full rounded-lg border p-2 font-mono" defaultValue={JSON.stringify(annotation.details || {},null,2)} onBlur={e=>{try {const value=JSON.parse(e.target.value);if (!value || Array.isArray(value) || typeof value!=='object') throw new Error();updateAnnotation(index,'details',value);}catch {setStatusMessage('Details must be a valid JSON object.');e.target.value=JSON.stringify(annotation.details || {},null,2);}}} rows={4} /></label>}
                         <div className="mt-3 flex justify-end">
                           <button type="button" className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-700 hover:bg-red-50" onClick={() => removeAnnotation(index)}>
                             Remove

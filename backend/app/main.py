@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.routes import router
+from .api.understanding import router as understanding_router
 from .database import Base, engine, SessionLocal, initialize_database
 from .models import Video
 
@@ -20,6 +21,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router)
+app.include_router(understanding_router)
 
 
 if __name__ == "__main__":

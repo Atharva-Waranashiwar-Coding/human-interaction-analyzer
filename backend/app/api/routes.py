@@ -11,6 +11,9 @@ from sqlalchemy.orm import Session
 from ..database import SessionLocal, get_db
 from ..models import Annotation, Video
 from ..schemas import AnnotationBulkUpdate
+from ..services.annotation_data import serialize_annotation, AUTOMATIC_SOURCES
+from ..services.understanding import refresh_understanding
+from ..services.annotation_data import snapshot, review_entry
 from ..services.video_service import (
     build_export_payload,
     create_annotation_records,
@@ -24,21 +27,6 @@ from ..services.video_service import (
 
 router = APIRouter(prefix="/api")
 
-
-def serialize_annotation(annotation: Annotation) -> dict:
-    return {
-        "id": annotation.id,
-        "start_time": float(annotation.start_time),
-        "end_time": float(annotation.end_time),
-        "behavior": annotation.behavior,
-        "participants": json.loads(annotation.participants or "[]"),
-        "objects": json.loads(annotation.objects or "[]"),
-        "parent_activity_id": annotation.parent_activity_id,
-        "description": annotation.description,
-        "source": annotation.source,
-        "confidence": annotation.confidence,
-        "review_status": annotation.review_status,
-    }
 
 
 def process_video_analysis(video_id: str) -> None:
@@ -62,6 +50,7 @@ def process_video_analysis(video_id: str) -> None:
             video.analysis_warnings = json.dumps(getattr(predictions,"warnings",[]))
             # Preserve every user-saved annotation, including rejected predictions.
             db.query(Annotation).filter(Annotation.video_id == video.id, Annotation.source == "local_model", Annotation.review_status == "needs_review").delete()
+            db.query(Annotation).filter(Annotation.video_id == video.id, Annotation.source.in_(['local_spatial','local_sequence']), Annotation.review_status == 'needs_review').delete()
             if predictions:
                 protected = db.query(Annotation).filter(Annotation.video_id == video.id).all()
                 records = [item for item in create_annotation_records(video.id,predictions)
@@ -90,6 +79,7 @@ def process_video_analysis(video_id: str) -> None:
                 video.analysis_status = "completed"
                 video.status = "ready"
                 video.status_message = "Local analysis completed with no supported behaviors detected. Manual annotation remains available."
+            refresh_understanding(db, video)
         except Exception as exc:  # pragma: no cover - defensive branch
             db.rollback()
             video = db.get(Video,video_id)
@@ -188,6 +178,8 @@ def get_video(video_id: str, db: Session = Depends(get_db)) -> dict:
         "annotations": [serialize_annotation(item) for item in annotations],
         "detections": json.loads(video.detections or "[]"),
         "analysis_warnings": json.loads(video.analysis_warnings or "[]"),
+        "scene_regions": json.loads(video.scene_regions or "[]"),
+        "audio_metadata": json.loads(video.audio_metadata or "{}"),
     }
 
 
@@ -232,10 +224,37 @@ def update_annotations(video_id: str, payload: AnnotationBulkUpdate, db: Session
             if parent not in parents or parent in seen:
                 raise HTTPException(status_code=422, detail="Parent activity must exist in these annotations without cycles.")
             seen.add(parent);parent=parents[parent]
-    db.query(Annotation).filter(Annotation.video_id == video_id).delete()
+    for aid, item in zip(ids,payload.annotations):
+        refs=item.details.get('action_ids',[])
+        if not isinstance(refs,list) or any(not isinstance(r,str) or r not in ids or r==aid for r in refs):
+            raise HTTPException(422,detail='Activity action references must exist in the same saved annotation set.')
+        if any(next(a for rid,a in zip(ids,payload.annotations) if rid==r).annotation_kind!='behavior' for r in refs):
+            raise HTTPException(422,detail='Activity references must point to behavior actions.')
+    existing = {a.id: serialize_annotation(a) for a in db.query(Annotation).filter(Annotation.video_id==video_id).all()}
+    audit = json.loads(video.review_log or '[]')
+    for aid, old in existing.items():
+        if aid not in ids and old.get('original_suggestion'):
+            audit.append(dict(annotation_id=aid, **review_entry(old['original_suggestion'],dict(old,review_status='rejected',reviewer_feedback='Annotation removed by reviewer'))))
+    if any(item.evaluation_role=='ground_truth' and (existing.get(aid,{}).get('original_suggestion') or existing.get(aid,{}).get('source') in AUTOMATIC_SOURCES) for aid,item in zip(ids,payload.annotations)):
+        raise HTTPException(status_code=422,detail='Ground truth must be a separate independent manual annotation, not a model suggestion.')
+    db.query(Annotation).filter(Annotation.video_id == video_id).delete(synchronize_session=False)
     for index, item in enumerate(payload.annotations):
+        prior = existing.get(ids[index])
+        original = (prior.get('original_suggestion') or (snapshot(prior) if prior['source'] in AUTOMATIC_SOURCES else {})) if prior else {}
+        history = list(prior.get('review_history',[])) if prior else []
+        final = dict(item.model_dump(), id=ids[index], behavior=item.behavior.lower())
+        entry = review_entry(original, final, prior)
+        if entry and (original or item.review_status!='needs_review' or item.reviewer_feedback):
+            history.append(entry)
+            audit.append(dict(annotation_id=ids[index],**entry))
         annotation = Annotation(
             id=ids[index],
+            annotation_kind=item.annotation_kind,
+            details=json.dumps(item.details),
+            original_suggestion=json.dumps(original),review_history=json.dumps(history),
+            reviewer_feedback=item.reviewer_feedback,
+            rule_version=prior.get('rule_version') if prior else None,
+            evaluation_role=item.evaluation_role,
             objects=json.dumps([obj.model_dump() for obj in item.objects]),
             parent_activity_id=item.parent_activity_id,
             video_id=video_id,
@@ -251,6 +270,7 @@ def update_annotations(video_id: str, payload: AnnotationBulkUpdate, db: Session
         if annotation.end_time < annotation.start_time:
             annotation.end_time = annotation.start_time
         db.add(annotation)
+    video.review_log = json.dumps(audit)
     video.status = "annotated"
     if video.analysis_status == "completed":
         video.analysis_status = "manual_review"

@@ -26,8 +26,21 @@ class AnnotationInput(BaseModel):
     confidence: Optional[float] = None
     review_status: str = "needs_review"
 
+    annotation_kind: Literal["behavior", "spatial", "activity", "audio"] = "behavior"
+    details: dict[str, Any] = Field(default_factory=dict)
+    original_suggestion: dict[str, Any] = Field(default_factory=dict)
+    review_history: list[dict[str, Any]] = Field(default_factory=list)
+    reviewer_feedback: str = ""
+    rule_version: str | None = None
+    evaluation_role: Literal["unspecified", "ground_truth"] = "unspecified"
+
     @model_validator(mode="after")
     def validate_time_range(self):
+        import json
+        try:
+            json.dumps(self.details, allow_nan=False)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("Details must contain finite JSON values") from exc
         if self.end_time < self.start_time:
             raise ValueError("end_time must be greater than or equal to start_time")
         return self
@@ -65,3 +78,38 @@ class VideoDetail(VideoSummary):
 
 class ExportJSONRequest(BaseModel):
     format: Literal["json", "jsonl"] = "json"
+
+
+class SceneRegion(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    id: str = Field(min_length=1, max_length=128)
+    label: str = Field(min_length=1, max_length=128)
+    kind: Literal["table", "shelf", "container", "workspace", "floor", "other"] = "workspace"
+    box: list[float] = Field(min_length=4, max_length=4)
+
+    @model_validator(mode="after")
+    def check_box(self):
+        a,b,c,d = self.box
+        if not (0 <= a < c <= 1 and 0 <= b < d <= 1):
+            raise ValueError("Region boxes must be ordered normalized letterbox coordinates in 0..1")
+        return self
+
+
+class RegionUpdate(BaseModel):
+    regions: list[SceneRegion] = Field(max_length=50)
+
+    @model_validator(mode="after")
+    def unique_regions(self):
+        if len({r.id for r in self.regions}) != len(self.regions):
+            raise ValueError("Region IDs must be unique")
+        return self
+
+
+class EvaluationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    covered_behaviors: list[str] = Field(min_length=1)
+    start_time: float = Field(default=0, ge=0)
+    end_time: float = Field(gt=0)
+    complete_ground_truth: bool = False
+    temporal_iou: float = Field(default=.5, gt=0, le=1)
+    scenario: str = "unspecified"

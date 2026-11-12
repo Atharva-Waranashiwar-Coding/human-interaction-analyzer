@@ -28,8 +28,13 @@ def initialize_database(target_engine=None):
     target_engine = target_engine or engine
     Base.metadata.create_all(bind=target_engine)
     additions = {
-        "annotations": {"objects": "TEXT NOT NULL DEFAULT '[]'", "parent_activity_id": "VARCHAR(64)"},
-        "videos": {"detections": "TEXT NOT NULL DEFAULT '[]'", "analysis_warnings": "TEXT NOT NULL DEFAULT '[]'"},
+        "annotations": {"objects": "TEXT NOT NULL DEFAULT '[]'", "parent_activity_id": "VARCHAR(64)",
+                        "annotation_kind": "VARCHAR(32) NOT NULL DEFAULT 'behavior'", "details": "TEXT NOT NULL DEFAULT '{}'",
+                        "original_suggestion": "TEXT NOT NULL DEFAULT '{}'", "review_history": "TEXT NOT NULL DEFAULT '[]'",
+                        "reviewer_feedback": "TEXT NOT NULL DEFAULT ''", "rule_version": "VARCHAR(64)",
+                        "evaluation_role": "VARCHAR(32) NOT NULL DEFAULT 'unspecified'"},
+        "videos": {"detections": "TEXT NOT NULL DEFAULT '[]'", "analysis_warnings": "TEXT NOT NULL DEFAULT '[]'",
+                   "scene_regions": "TEXT NOT NULL DEFAULT '[]'", "review_log": "TEXT NOT NULL DEFAULT '[]'", "audio_metadata": "TEXT NOT NULL DEFAULT '{}'"},
     }
     inspector = inspect(target_engine)
     missing = any(name not in {column["name"] for column in inspector.get_columns(table)}
@@ -38,6 +43,8 @@ def initialize_database(target_engine=None):
     if missing and database and database != ":memory:":
         import sqlite3
         backup = Path(database).with_suffix(".pre-object-backup.sqlite3")
+        if backup.exists():
+            backup = Path(database).with_suffix(".pre-understanding-backup.sqlite3")
         if not backup.exists():
             with sqlite3.connect(database) as source, sqlite3.connect(backup) as destination:
                 source.backup(destination)

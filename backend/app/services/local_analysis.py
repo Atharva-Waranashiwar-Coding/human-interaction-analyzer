@@ -269,7 +269,7 @@ def analyze(path, metadata):
                     object_rules.step(t,stable_people,stable_objects,limited,relative_people=people,relative_objects=objects)
                 boxes=[dict(id=pid,class_name='person',box=[v/size for v in p['box']]) for pid,p in people.items()]
                 boxes += [dict(id=oid,class_name=o['class_name'],box=[v/size for v in o['box']]) for oid,o in objects.items()]
-                detections.append(dict(time=round(t,4),items=boxes))
+                detections.append(dict(time=round(t,4),items=boxes,camera_state=estimate.state))
             frame_count += 1
         predictions = sorted(rules.finish_all()+movement.results()+relative_movement.results()+object_rules.results(),key=lambda e:(e["start_time"],e["behavior"]))
         if not predictions and frame_count and camera_unknown_frames/frame_count>.5:

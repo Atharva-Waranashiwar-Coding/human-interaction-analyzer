@@ -1,11 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+
+import { Region } from '../lib/types';
 
 type Detection = { id: string; class_name: string; box: number[] };
 type Frame = { time: number; items: Detection[] };
 
-export default function DetectionOverlay({ src, frames }: { src: string; frames: Frame[] }) {
+export default function DetectionOverlay({ src, frames, regions = [], seekRequest }: { src: string; frames: Frame[]; regions?: Region[]; seekRequest?: {time: number; key: number} }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  useEffect(()=>{if(videoRef.current && seekRequest && videoRef.current.readyState>=1) videoRef.current.currentTime=Math.min(videoRef.current.duration,seekRequest.time);},[seekRequest]);
   const [time, setTime] = useState(0);
   const [ratio, setRatio] = useState(1);
   const [visible, setVisible] = useState(true);
@@ -28,10 +32,11 @@ export default function DetectionOverlay({ src, frames }: { src: string; frames:
   return (
     <div>
       <div className="relative overflow-hidden rounded-xl bg-black">
-        <video src={src} controls className="block w-full" onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
+        <video ref={videoRef} src={src} controls className="block w-full" onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
           onSeeked={(e) => setTime(e.currentTarget.currentTime)}
-          onLoadedMetadata={(e) => { setRatio(e.currentTarget.videoWidth / e.currentTarget.videoHeight || 1); setTime(0); }} />
+          onLoadedMetadata={(e) => { setRatio(e.currentTarget.videoWidth / e.currentTarget.videoHeight || 1); const target = Math.min(e.currentTarget.duration,seekRequest?.time || 0);e.currentTarget.currentTime=target;setTime(target); }} />
         {visible && <svg aria-label="Sampled detections" viewBox="0 0 1000 1000" preserveAspectRatio="none" className="pointer-events-none absolute inset-0 h-full w-full">
+          {regions.map(r=><g key={r.id} stroke="#c084fc" fill="none"><rect x={(r.box[0]-(1-w)/2)/w*1000} y={(r.box[1]-(1-h)/2)/h*1000} width={(r.box[2]-r.box[0])/w*1000} height={(r.box[3]-r.box[1])/h*1000} strokeWidth="2" strokeDasharray="8 5" /><text x={(r.box[0]-(1-w)/2)/w*1000+4} y={(r.box[1]-(1-h)/2)/h*1000+20} fill="#c084fc" fontSize="20">{r.label}</text></g>)}
           {boxes.map((b) => <g key={b.id} fill="none" stroke={b.class_name === 'person' ? '#38bdf8' : '#fbbf24'}>
             <rect x={b.x1} y={b.y1} width={b.x2-b.x1} height={b.y2-b.y1} strokeWidth="3" vectorEffect="non-scaling-stroke" />
             <text x={b.x1 + 4} y={Math.max(18,b.y1 + 20)} fill={b.class_name === 'person' ? '#38bdf8' : '#fbbf24'} stroke="black" strokeWidth=".5" fontSize="20">{b.id} · {b.class_name}</text>

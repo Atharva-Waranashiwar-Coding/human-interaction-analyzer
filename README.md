@@ -306,3 +306,104 @@ There is no representative frame-level ground truth, calibrated action confidenc
 | [frontend/app/page.tsx](frontend/app/page.tsx) | Multiple uploads, per-video controls, tabs, editor, tables and export |
 | [frontend/components/DetectionOverlay.tsx](frontend/components/DetectionOverlay.tsx) | Sampled person/object boxes on playback |
 | [backend/tests](backend/tests) | Existing regressions and focused model/rule/API/storage tests |
+
+## Extension baseline and compatibility
+
+Baseline inspected on November 12, 2026 at commit `532ae8d`, clean `main` tracking `origin/main`. Before implementation, backend verification passed 180 tests with one optional real-video case skipped. Frontend lint and TypeScript passed with two existing React effect dependency warnings.
+
+Architecture: Next.js App Router provides sequential multi-upload, selected-video controls, the existing playback/detection overlay, annotation editor/table, and JSON/JSONL export. FastAPI stores videos and annotations in SQLite through SQLAlchemy, with additive migrations and local FFmpeg/FFprobe upload validation. A serialized local YOLO pose/ByteTrack and sparse object-detector pass consumes one in-memory sampled-frame stream. Camera transforms feed existing temporal person, movement, manipulation, and pickup/carry/place grouping rules. Normalized raw detections are cached on each video; extracted inference frames are not permanently stored. Analysis jobs preserve user-saved annotations and rejected suggestions.
+
+Reusable extension points are the cached detection list, `Annotation` records and stable IDs, the bulk review endpoint, export serializer, background analysis job, and existing player. Compatibility risks include bulk-save replacement of annotations, source changes on review, reanalysis preserving manual records, legacy detection caches lacking camera reliability, and tracking discontinuities. Object pushing/pulling and complex packing/sorting/loading remain manual; direct object handover and a conservative relocation parent already exist. New capabilities must not imply that all listed tasks are automatically recognized or that image overlap proves containment/contact.
+
+## Scene and activity extension
+
+### What was added
+
+The extension reuses the sampled detection cache, existing action annotations, SQLite database, bulk review/save API, export path, and single playback component. It introduces no model, service, dependency, second video pipeline, automatic retraining, or paid API. Original behavior rules remain intact; the detection cache additionally records `camera_state` for each object-sampling timestamp. Existing caches remain usable for static entity relations, while motion and region transitions require explicit reliable static-camera evidence.
+
+New annotation types are `spatial`, `activity`, and `audio`; legacy records default to `behavior`. These types use the same editor, IDs, review statuses, and persistence as existing annotations. Automatic additions always begin as `needs_review`, with `confidence: null` and observable evidence. The Scene and activities tab summarizes the advanced annotations and opens the existing editor for review. The editor defaults to behavior rows, with a type filter for advanced rows. Region outlines appear in the existing detection overlay. Search results seek that same player rather than opening another player.
+
+### Spatial relationships
+
+`spatial.py` generates sustained `near`, `overlapping`, `above`, `below`, `left`, `right`, `moves toward`, and `moves away` suggestions. Distances use person height when available, otherwise object height. It requires at least three observations and 0.8 seconds of sustained evidence. Both directions of entity relations are explicit. Long interruptions, missing entities, scene cuts, and camera-state changes break histories. Regions require static-camera evidence; moving or unknown cameras suppress region analysis and trajectory relations. Static pairwise relations can still be inspected on older caches.
+
+Configure a table, shelf, container, floor, workspace, or other image region with an ID, label, kind, and `[left, top, right, bottom]` box in normalized square letterbox coordinates. For a landscape video with aspect ratio `r`, visible normalized image bounds are `x=0..1`, `y=(1-1/r)/2..(1+1/r)/2`. For portrait video, visible bounds are `x=(1-r)/2..(1+r)/2`, `y=0..1`. Region outlines provide a visual check. IDs must be unique and cannot collide with tracked entity IDs.
+
+`enters region` and `exits region` require stable center membership on both sides, with no intervening missing observation or unreliable camera estimate. Region membership is supporting evidence; it is never described as physical containment. `possible on-surface placement` additionally requires an existing placement action, a uniquely supported table/shelf region, and a stationary object tail. Overlap alone never produces placement. Surface height, depth, support, and contact remain unconfirmed.
+
+### Configurable activity recognition
+
+`sequences.py` defines small `ActivityDefinition` and `Step` records. Each definition specifies ordered labels, optional steps, a total time window, and a maximum inter-step gap. Matching preserves participant IDs and object IDs, references the existing action IDs, and records `complete`, `partial`, or `interrupted` plus missing required steps. Optional steps are never fabricated. Separate identities can produce concurrent activities; tracking-ID changes cannot be silently joined. Scene cuts and missing tracked entities between steps interrupt a sequence.
+
+Default candidates are:
+
+- `object_relocation`: pickup/lift → carry or walking while carrying → place, with optional release, within 20 seconds and a three-second inter-step gap.
+- `object_transfer`: references the existing direct handover/receiving action. It does not add a new handover detector.
+- `repeated_pickup_placement`: at least two nonoverlapping complete relocation patterns by the same participants within 60 seconds. It does not establish packing, sorting, loading, or unloading.
+
+Activities reference their evidence in `details.action_ids` rather than copying the actions. Source and destination regions are included only when repeated observations uniquely support the same region around the first/last action. Missing or overlapping region evidence leaves these fields absent. A complete sequence means the rule found its required action annotations, not that the task succeeded. The earlier `moving objects between locations` parent annotation and `parent_activity_id` remain unchanged for compatibility.
+
+Packing/unpacking, sorting, loading/unloading, shelf-specific tasks, helping, and object pushing/pulling remain manual unless independently supported annotations are added. The sequence definitions are Python configuration records; this phase does not add a workflow designer or automatically infer task intent.
+
+### Feedback and evaluation
+
+The server captures immutable `original_suggestion`, `rule_version`, per-annotation `review_history`, and optional `reviewer_feedback`. Saving Reviewed is recorded as accepted or corrected according to changes from the original suggestion; Rejected records rejection. Submitted copies of provenance fields are accepted for round trips but cannot overwrite server provenance. A video-level review log preserves rejected removals after their annotation row is deleted. Reanalysis and cached enrichment preserve saved/corrected/rejected rows.
+
+Evaluation requires separate, independent manual annotations with `evaluation_role: "ground_truth"` and `review_status: "reviewed"`. A prediction cannot simply be relabeled as ground truth. The evaluation request explicitly declares covered behaviors, interval, scenario, and whether ground truth is exhaustive for that scope. Without this declaration or usable reviewed data, the API returns a reason and no scores. Declaring exhaustive scope includes responsibility for labeling missed actions and for verifying genuinely empty intervals.
+
+Reviewed original predictions, including rejected suggestions, are matched one-to-one against independent ground truth using exact behavior and entity ID/class sets with temporal intersection-over-union of at least 0.5 by default. Maximum-cardinality matching avoids greedy double-counting. Results include TP, FP, FN, precision, recall, F1, per-behavior metrics, and excluded unreviewed predictions. Undefined ratios are `null`, not invented zeros. Changes in IDs can affect matching and must be corrected consistently. Metrics cover reviewed predictions in the declared scope, not unreviewed predictions or the entire dataset. `/api/evaluation` accepts multiple video scopes and aggregates counts and metrics by scenario; per-video and per-behavior results remain available in its response. No training runs automatically.
+
+### Structured activity search
+
+Search uses the current SQLite annotations and JSON metadata. Filters cover behavior/activity label, annotation type, exact person count, object category, participant ID, object ID, review status, interval overlap, video, and ordered action sequence. Participant/object filters require the association in the same annotation. Sequence filters use referenced action IDs in order and support up to eight labels, separated by `>`. Queries are parameterized and paginated (default 50, maximum 100; UI pages use 25). Results include video, timestamp interval, entities, status, and an editor link. Search includes saved legacy annotations and clearly displays unreviewed results. Unsaved editor changes are excluded until Save. There are no embeddings, natural-language search, or new search services.
+
+### Optional audio
+
+Audio is disabled by default. Only clicking Inspect audio metadata or explicitly calling its endpoint invokes an audio-stream FFprobe probe. Results cache codec, sample rate, channels, and track start/end intervals synchronized to video timestamps. Missing stream duration uses a documented video-duration fallback. No audio is extracted or permanently stored. No speech recognition, speaker identity, emotion, intent, or automatic audio-event model is added. Manual `audio` annotations use the same timestamps, editor, review, search, and export as other annotations. Videos without audio continue normally and report `has_audio: false` only after an explicit probe.
+
+### Additive API and schema changes
+
+Existing endpoints and required fields retain their behavior. New endpoints are:
+
+| Method and path | Purpose |
+|---|---|
+| `PUT /api/videos/{id}/regions` | Validate/save regions and regenerate cached suggestions |
+| `POST /api/videos/{id}/understanding` | Regenerate spatial and activity suggestions without model inference |
+| `GET /api/videos/{id}/feedback` | Read persisted feedback history |
+| `POST /api/videos/{id}/evaluation` | Evaluate an explicit video scope |
+| `POST /api/evaluation` | Evaluate multiple scopes and aggregate by scenario |
+| `GET /api/activities/search` | Search annotations and activity sequences |
+| `POST /api/videos/{id}/audio` | Explicitly probe/cache audio metadata |
+
+SQLite migrations add `scene_regions`, `audio_metadata`, and `review_log` to videos. Annotation additions are `annotation_kind`, `details`, `original_suggestion`, `review_history`, `reviewer_feedback`, `rule_version`, and `evaluation_role`. Defaults preserve existing records. Migration is idempotent and makes a local backup before altering an existing schema; an existing pre-object backup is preserved and a separate pre-understanding backup is used. No tables are added. JSON exports retain original keys and add annotation metadata plus regions/audio/review log at video level. JSONL remains one annotation per line with additive fields. Linked action IDs must exist in the same saved set and point to behavior annotations; parent activity validation remains in place.
+
+### Files changed
+
+New backend services: `spatial.py`, `sequences.py`, `annotation_data.py`, `understanding.py`, `evaluation.py`, `activity_search.py`, and `audio.py`; new router: `backend/app/api/understanding.py`. Integration changes: `models.py`, `schemas.py`, `database.py`, `main.py`, existing `api/routes.py`, `services/video_service.py`, and the cached camera-state field in `services/local_analysis.py`. Existing detector/tracker, person temporal, manipulation and camera-estimation modules are reused.
+
+New frontend components: `ActivitySearch.tsx`, `UnderstandingPanel.tsx`, shared `lib/types.ts`; existing `app/page.tsx` and `DetectionOverlay.tsx` provide navigation, editor integration, region overlays, and timestamp seeking. Tests are added in `test_spatial.py`, `test_sequences.py`, `test_evaluation.py`, `test_understanding_api.py`, and `test_audio.py`. The existing optional real-video workflow now checks the source appropriate to each annotation kind while retaining the original `local_model` contract for behavior annotations.
+
+### Manual verification steps
+
+1. Start the app using the existing local setup. Restart the backend after this update so additive migrations run. Upload real MP4/MOV/WebM clips, select one, Analyze, and confirm playback, detections, old behavior suggestions, manual editing, Save, and JSON/JSONL export still work. Analyze again should use saved results; Reanalyze should preserve saved/rejected rows.
+2. Open Scene and activities. For a static-camera clip, configure a floor/workspace and table/shelf region using the documented coordinates and check the violet outlines in Video & editor. Save regions. Inspect relation evidence, timestamps, and entity IDs; an overlapping box without a placement action must not produce a surface-placement claim. Moving-camera clips must not produce region-entry/exit or directional motion suggestions from unsupported screen motion.
+3. Use a clip with pickup, carrying, and placement on the same visible track. Save or correct the underlying action annotations, then Update suggestions from saved results. Confirm grouped action IDs and status. Remove a required action or interrupt a track to inspect a partial/interrupted candidate rather than fabricated completion. Check simultaneous actions by different people remain separate.
+4. Open Review in editor on a spatial or activity row. Correct its label/entities/times, add reviewer feedback, mark Reviewed or Rejected, and Save. Reload and check the original suggestion and history count; export retains provenance. Updating cached suggestions must preserve the reviewed row.
+5. Add separate manual action annotations from independently reviewed video. Select Independent manual ground truth and Reviewed, then Save. In Evaluation, set covered labels, scope, scenario and exhaustive labeling checkbox. Calculate and inspect TP/FP/FN and defined/undefined metrics. Without complete labeling, confirm the explanatory no-score response. Create a deliberately missing action to verify FN accounting; a rejected false suggestion should contribute FP against complete independent truth.
+6. Expand Search activities across videos. Search by label, object class, participant/object association, person count, status, and interval; search `picking up / lifting > carrying > placing / putting down` for sequences. Open a result and confirm the existing player seeks its timestamp and its annotation is editable. Check a nonexistent label returns zero matches.
+7. On an audio and a silent clip, explicitly Inspect audio metadata and verify track presence and intervals. Add a manual audio event, edit its times/description, review, Save, search by audio type, and export. Until inspection is requested, no audio processing occurs.
+
+### Performance and remaining limitations
+
+The extension performs only cached-box arithmetic, ordered annotation matching, small SQLite queries, and explicit FFprobe metadata inspection. On the two existing real-video caches (21 and 25 sampled detection frames), a single spatial-plus-sequence pass measured approximately 3.5 ms and 0.3 ms respectively, excluding database I/O and inference. These small samples are not a general performance benchmark. Real video model passes remained the same single pipeline; their measured local analysis times were approximately 8.6 and 8.7 seconds in the first integration run. New processing adds no model memory or frame storage; annotations and review history add SQLite storage proportional to evidence/review volume.
+
+Geometry remains two-dimensional. Regions are image anchored, not world coordinates; moving-camera region mapping and physical containment remain unsupported. Legacy caches lack camera reliability and need Reanalyze for trajectory/region rules. Occlusions and ID changes conservatively fragment workflows. Advanced task intent, comprehensive packing/sorting/loading recognition, automatic audio classification, training, calibrated model accuracy, and a visual workflow designer remain future work. Representative independent ground truth is still needed before drawing recognition-quality conclusions. Real-video checks validate execution and integration, not accuracy of every new relation or workflow.
+
+
+### Extension validation results
+
+The full extension regression run passed **210 tests including two real-video API workflows** in **23.70 seconds** on November 12, 2026. This covers 208 deterministic/API tests and two explicitly supplied real clips; no real-video case was skipped in that run. The suite includes additive migration and legacy export checks, spatial motion/occlusion/cut negatives, sequence completeness and identity continuity, accept/reject/correct provenance, deleted-review retention, independent-ground-truth matching, scoped/scenario evaluation, structured and ordered-sequence searches, optional audio probing with an actual generated audio track, and silent-video compatibility. The existing Starlette/httpx deprecation warning remains; it does not fail tests.
+
+Frontend lint, TypeScript checking and the production build passed. An isolated Chrome session using a temporary SQLite database and a copied real clip verified advanced activity review, persisted feedback, region configuration, absence of invented evaluation scores without ground truth, audio metadata and manual event saving, structured search, and existing-player seeking to 2 seconds, with **zero browser JavaScript errors**. Scripted manual action rows exercised the UI sequence controls; those rows are not recognition ground truth. User videos/databases were read or copied for testing rather than edited. Test media, temporary databases, browser artifacts, and weights remain outside Git.
+
+The extension was developed and verified on `feature/spatial-activity-understanding`. No deployment or production configuration change was performed. Restart the local backend to activate the additive schema migration and endpoints; the frontend uses the existing development/build commands. No known regression was found in the completed checks. Exhaustive recognition quality across real scenes remains unverified and requires representative independent ground truth.

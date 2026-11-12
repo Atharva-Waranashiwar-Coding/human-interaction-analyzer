@@ -199,7 +199,9 @@ def test_real_video_workflow(real_video_path):
         assert not ({'bed','refrigerator'} & classes), classes
     for annotation in detail['annotations']:
         assert 0 <= annotation['start_time'] <= annotation['end_time'] <= detail['duration']
-        assert annotation['source'] == 'local_model'
+        expected_source={'behavior':'local_model','spatial':'local_spatial','activity':'local_sequence'}
+        assert annotation['source'] == expected_source[annotation.get('annotation_kind','behavior')]
+        assert annotation['review_status']=='needs_review'
     edited = detail['annotations'] + [dict(start_time=0, end_time=min(1, detail['duration']), behavior='manual test', participants=[], source='manual', review_status='reviewed')]
     assert client.put(f'/api/videos/{vid}/annotations', json={'annotations': edited}).status_code == 200
     assert any(a['behavior'] == 'manual test' for a in client.get(f'/api/videos/{vid}/export').json()['annotations'])
