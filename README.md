@@ -440,3 +440,41 @@ database migrations, paid services, or frontend dependencies are introduced.
 Check these rules with independent real-video labels before treating them as
 accurate. Run `.venv/bin/python -m pytest backend/tests -q` and
 `cd frontend && npm run build` to check for regressions.
+
+
+### Experimental tracking reliability and local evaluation
+
+The object tracker optionally repairs an anonymous alias after a **single sampling-frame gap** when one uniquely matching, inactive same-class prior track exists near the new bounding box. It uses a conservative position gate and runner-up ambiguity margin, and never reuses a currently observed raw track ID. Unknown/ambiguous candidates receive new aliases as before. This affects tracker identity only: manipulation rules still require uninterrupted observed evidence and do not bridge missing frames. The local analysis metrics now include `object_track_recoveries`. Scene cuts still reset tracker state.
+
+To benchmark recognition from **independently reviewed local annotations**, prepare a JSON fixture with this structure (do not commit user videos or private annotations):
+
+```json
+{
+  "scopes": [
+    {
+      "request": {
+        "covered_behaviors": ["carrying"],
+        "start_time": 0,
+        "end_time": 10,
+        "scenario": "static-camera",
+        "complete_ground_truth": true,
+        "temporal_iou": 0.5
+      },
+      "annotations": [],
+      "review_log": []
+    }
+  ]
+}
+```
+
+Populate `annotations` with reviewed predictions containing `original_suggestion` and separate reviewed, independently produced manual `evaluation_role: "ground_truth"` annotations. The evaluator rejects scopes without usable evaluated annotations; **empty arrays do not create perfect scores**. Only declare `complete_ground_truth` when every relevant action in that interval has been independently checked, including absent detections.
+
+From the project root, run:
+
+```bash
+.venv/bin/python backend/evaluate_fixture.py /absolute/path/to/reviewed-scopes.json --output /tmp/activity-evaluation.json
+.venv/bin/python -m pytest backend/tests -q
+cd frontend && npm run build
+```
+
+The runner performs no video inference, remote requests, storage migrations, or dataset training. It reports per-scope precision/recall/F1 and pooled TP/FP/FN using the existing evaluation matcher. Use separate static-camera, moving-camera, occlusion, crowded-scene and partial-body scopes to compare regressions. Calibration and end-to-end benchmark accuracy remain unknown until representative ground truth is supplied. This change introduces no new model, dependency, UI, or deployment work.
