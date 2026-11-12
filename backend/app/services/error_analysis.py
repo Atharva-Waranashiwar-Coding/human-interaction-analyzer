@@ -30,3 +30,23 @@ def error_report(scopes):
         "error_examples": sorted(cases, key=lambda c: (c["scope_index"], c["start_time"], c["error"])),
         "note": "These are reviewed-scoped results only, not full-video or unreviewed accuracy.",
     }
+
+
+def compare_reports(current, baseline):
+    """Compare evaluated scoped count metrics; no synthetic accuracy claims."""
+    def diff(a, b):
+        metrics = ("true_positives", "false_positives", "false_negatives", "precision", "recall", "f1")
+        return {key: (a[key]-b[key] if a.get(key) is not None and b.get(key) is not None
+                      else None) for key in metrics}
+    if not current.get("scopes") or not baseline.get("scopes"):
+        raise ValueError("Both reports need evaluated scopes")
+    # Comparisons must cover identical labeled scopes, not just aggregate counts.
+    identity = lambda scope: (scope["scenario"], tuple(sorted(scope["scope"]["covered_behaviors"])),
+                              scope["scope"]["start_time"], scope["scope"]["end_time"],
+                              scope["scope"]["temporal_iou"])
+    left = [identity(s) for s in current["scopes"]]
+    right = [identity(s) for s in baseline["scopes"]]
+    if sorted(left) != sorted(right):
+        raise ValueError("Cannot compare reports with different evaluation scopes")
+    return {"summary_delta": diff(current["summary"], baseline["summary"]),
+            "note": "Scope metadata matches; independently verify both reports use the same labeled videos and ground truth."}
