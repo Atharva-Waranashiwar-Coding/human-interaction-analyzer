@@ -458,12 +458,12 @@ def test_no_recovery_after_long_gap_or_class_change():
 
 
 def test_ambiguous_short_gap_creates_new_alias():
-    model,_=fake_model([
-        ([[0,0,20,20],[3,0,23,20]],[1,2],[39,39]),
-        ([[2,0,22,20]],[9],[39]),
-    ])
+    model,_=fake_model([([[2,0,22,20]],[9],[39])])
     tracker=ObjectTracker(model,2)
-    tracker.step(0,None,'cpu',640)
+    # Two inactive prior tracks with indistinguishable positions.
+    tracker.last={1:(0,'bottle',(10,10)),2:(0,'bottle',(13,10))}
+    tracker.aliases={1:'object_1',2:'object_2'}
+    tracker.count=2
     after=tracker.step(.5,None,'cpu',640)
     assert 'object_3' in after
     assert tracker.recovered_count==0
@@ -472,7 +472,7 @@ def test_ambiguous_short_gap_creates_new_alias():
 def test_simultaneously_observed_raw_ids_never_alias_each_other():
     model,_=fake_model([
         ([[0,0,20,20]],[1],[39]),
-        ([[1,0,21,20],[2,0,22,20]],[1,9],[39,39]),
+        ([[1,0,21,20],[35,0,55,20]],[1,9],[39,39]),
     ])
     tracker=ObjectTracker(model,2)
     tracker.step(0,None,'cpu',640)
