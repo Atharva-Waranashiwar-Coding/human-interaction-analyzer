@@ -301,10 +301,10 @@ class ObjectActivities:
         d1=math.dist(obj_end,body_end)/h
         difference=d1-d0
         if difference>.15:
-            label='pushing / pulling an object'
+            label='pushing an object'
             evidence='The visible object and a continuously nearby wrist moved laterally away from a mostly stationary torso. Direction is consistent with pushing but force and contact are unconfirmed.'
         elif difference<-.15:
-            label='pushing / pulling an object'
+            label='pulling an object'
             evidence='The visible object and a continuously nearby wrist moved laterally toward a mostly stationary torso. Direction is consistent with pulling but force and contact are unconfirmed.'
         else:
             label='dragging / sliding an object'
