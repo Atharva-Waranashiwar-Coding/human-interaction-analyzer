@@ -6,6 +6,14 @@ A local application for reviewing human activity and object interactions in vide
 
 Automatic annotations are geometry-based review suggestions. They start as `needs_review`, include observable evidence, and have uncalibrated action confidence represented as `null`. No API key, paid inference service, facial recognition, identity matching, emotion or relationship inference is used.
 
+## Project at a glance
+
+**Stack:** Next.js, React, TypeScript, FastAPI, Python, SQLite, SQLAlchemy, FFmpeg, YOLO pose/object detection, ByteTrack.
+
+**Local demo:** Follow [Setup](#setup) and [Run locally](#run-locally), open [the review app](http://localhost:3000), upload a short clip, analyze it, correct a suggestion, save, and export JSON/JSONL. No hosted demo is currently linked.
+
+**Architecture:** One sampled FFmpeg frame stream feeds cached local vision models. Geometry and temporal rules create reviewable suggestions; SQLite preserves annotations, evidence, and review history. Reanalysis protects saved corrections and rejected suggestions.
+
 ## Contents
 
 - [Setup](#setup)
